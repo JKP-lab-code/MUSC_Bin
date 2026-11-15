@@ -2,19 +2,76 @@
 เว็บแอปพลิเคชัน: Phayathai Campus Trash & Bin Finder Map 
 คณะวิทยาศาสตร์ มหาวิทยาลัยมหิดล (พญาไท) 
 พัฒนาด้วย: Python + Plotly Dash (Pure Python, No JavaScript) 
-เวอร์ชัน: นำรหัสถังขยะ (BIN-XX-XXX) มุมขวาบนของการ์ดออกทุกจุด
+เวอร์ชัน: ผสานโลโก้ MUSC_BIN + SEO Meta Tags เข้ากับระบบค้นหา 300 รายการและข้อมูลล่าสุด
 """
 import os
 import pandas as pd
 from dash import Dash, html, dcc, Input, Output, State, ALL, ctx, no_update
 
 # =============================================================================
-# 1. ฐานข้อมูลจุดทิ้งขยะและอาคารตามเอกสาร Data_bin_location.docx
+# 1. โหลดฐานข้อมูลรายการสิ่งของ 300 รายการจาก waste_classification_300_items.csv
+# =============================================================================
+def load_waste_catalog(csv_filename="waste_classification_300_items.csv"):
+    base_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else "."
+    csv_path = os.path.join(base_dir, csv_filename)
+    if not os.path.exists(csv_path):
+        csv_path = csv_filename
+    if not os.path.exists(csv_path):
+        print(f"⚠️ ไม่พบไฟล์ {csv_filename} ระบบจะค้นหาจากข้อมูลถังขยะในอาคารแทน")
+        return []
+
+    df = pd.read_csv(csv_path)
+    catalog = []
+    for _, row in df.iterrows():
+        w_en = str(row.get("waste_type_en", "")).strip()
+        sub = str(row.get("หมวดหมู่ย่อย", "")).strip()
+        name = str(row.get("รายการสิ่งของ", "")).strip()
+        type_th = str(row.get("ประเภทขยะ", "")).strip()
+
+        if w_en == "General Waste":
+            bin_type = "general"
+        elif w_en == "Recycle Waste":
+            bin_type = "recycle"
+        elif w_en == "Hazardous Waste":
+            if sub in ["แบตเตอรี่และแหล่งจ่ายไฟ", "ขยะอิเล็กทรอนิกส์ขนาดเล็ก (E-Waste)"]:
+                bin_type = "e-waste"
+            else:
+                bin_type = "hazardous"
+        else:
+            bin_type = "general"
+
+        catalog.append({
+            "name": name,
+            "sub": sub,
+            "type_th": type_th,
+            "bin_type": bin_type
+        })
+    return catalog
+
+WASTE_ITEMS_CATALOG = load_waste_catalog()
+
+def search_waste_catalog(search_query):
+    """ค้นหาสิ่งของจากฐานข้อมูล 300 รายการ และคืนค่ารายการที่พบพร้อมประเภทถังขยะ"""
+    q = (search_query or "").strip().lower()
+    if not q or not WASTE_ITEMS_CATALOG:
+        return [], set()
+
+    matched_items = []
+    matched_types = set()
+    for item in WASTE_ITEMS_CATALOG:
+        if q in item["name"].lower() or q in item["sub"].lower():
+            matched_items.append(item)
+            matched_types.add(item["bin_type"])
+    return matched_items, matched_types
+
+
+# =============================================================================
+# 2. ฐานข้อมูลจุดทิ้งขยะและอาคาร
 # =============================================================================
 BUILDINGS_DATA = [
     {
         "num": 1, "id": "L", "name_en": "Lecture Building (L)", "name_th": "อาคาร 1 (ตึกกลม)",
-        "x_pct": 56.43, "y_pct": 38.19, "icon": "🏛️",
+        "x_pct": 56.43, "y_pct": 38.19,
         "zone": "โซนหน้าแคมปัส ติด GATE 2 และถนนพระราม 6", "floors": [1],
         "description": "อาคารบรรยายรวม (ตึกกลม) ศูนย์กลางกิจกรรมและการเรียนการสอน",
         "gates": ["GATE 2"],
@@ -22,7 +79,7 @@ BUILDINGS_DATA = [
             {
                 "id": "BIN-1-101", "floor": 1, "type": "general", "type_th": "ขยะทั่วไป / ขยะฝังกลบ",
                 "loc": " ", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะรีไซเคิล, สารเคมี, ขยะมีพิษ", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-1-102", "floor": 1, "type": "recycle", "type_th": "ขยะรีไซเคิล",
@@ -38,7 +95,7 @@ BUILDINGS_DATA = [
     },
     {
         "num": 2, "id": "C", "name_en": "Chemistry Building (C)", "name_th": "อาคาร 2 (อาคารเคมี)",
-        "x_pct": 45.96, "y_pct": 24.79, "icon": "🧪",
+        "x_pct": 45.96, "y_pct": 24.79,
         "zone": "โซนหน้าฝั่งซ้าย ถัดจากตึกกลม เชื่อมต่อตึกวิจัย", "floors": [1, 4],
         "description": "ภาควิชาเคมี และห้องปฏิบัติการวิทยาศาสตร์",
         "gates": ["GATE 1", "GATE 2"],
@@ -47,7 +104,7 @@ BUILDINGS_DATA = [
             {
                 "id": "BIN-2-101", "floor": 1, "type": "general", "type_th": "ขยะทั่วไป / ขยะฝังกลบ",
                 "loc": "ชั้น 1 หน้าห้องน้ำ", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะรีไซเคิล, ขยะอันตราย", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-2-102", "floor": 1, "type": "recycle", "type_th": "ขยะรีไซเคิล (ขวดแก้ว, กระป๋อง)",
@@ -62,13 +119,13 @@ BUILDINGS_DATA = [
             {
                 "id": "BIN-2-104", "floor": 1, "type": "e-waste", "type_th": "ขยะอิเล็กทรอนิกส์",
                 "loc": "ชั้น 1 หน้าห้องน้ำ", "items": "แบตเตอรี่, ถ่านไฟฉาย, หลอดไส้",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะทั่วไป, ขยะเปียก", "status": "พร้อมใช้งาน"
             },
             # ชั้น 4
             {
                 "id": "BIN-2-401", "floor": 4, "type": "general", "type_th": "ขยะทั่วไป",
                 "loc": "ชั้น 4 ทางเดินหน้าห้องปฏิบัติการ", "items": "พลาสติกห่ออาหาร, ถุงแกง, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะรีไซเคิลสะอาด", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-2-402", "floor": 4, "type": "organic", "type_th": "ขยะย่อยสลายได้",
@@ -84,7 +141,7 @@ BUILDINGS_DATA = [
     },
     {
         "num": 5, "id": "N", "name_en": "New Biology Building (N)", "name_th": "อาคาร 5 (อาคารชีววิทยาใหม่)",
-        "x_pct": 36.22, "y_pct": 14.17, "icon": "🔬",
+        "x_pct": 36.22, "y_pct": 14.17,
         "zone": "โซนหลังฝั่งซ้าย ใกล้อาคารสตางค์ มงคลสุข", "floors": [],
         "description": "อาคารเรียนและวิจัยขั้นสูงด้านชีววิทยา",
         "gates": ["GATE 1"],
@@ -92,7 +149,7 @@ BUILDINGS_DATA = [
     },
     {
         "num": 7, "id": "P", "name_en": "Physics Building (P)", "name_th": "อาคาร 7 (อาคารฟิสิกส์)",
-        "x_pct": 64.66, "y_pct": 20.51, "icon": "⚛️",
+        "x_pct": 64.66, "y_pct": 20.51,
         "zone": "โซนกลางฝั่งขวา เชื่อมต่ออาคารวิจัยและอาคารเฉลิมพระเกียรติ", "floors": [1, 4, 5, 6],
         "description": "ภาควิชาฟิสิกส์ และห้องปฏิบัติการฟิสิกส์",
         "gates": ["GATE 2", "GATE 3"],
@@ -101,7 +158,7 @@ BUILDINGS_DATA = [
             {
                 "id": "BIN-7-101", "floor": 1, "type": "general", "type_th": "ขยะทั่วไป / ขยะฝังกลบ",
                 "loc": "ใต้ตึกฟิสิกส์", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะรีไซเคิล, สารเคมี", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-7-102", "floor": 1, "type": "recycle", "type_th": "ขยะรีไซเคิล",
@@ -111,86 +168,86 @@ BUILDINGS_DATA = [
             {
                 "id": "BIN-7-103", "floor": 1, "type": "e-waste", "type_th": "ขยะอิเล็กทรอนิกส์",
                 "loc": "ใต้ตึกฟิสิกส์", "items": "แบตเตอรี่, ถ่านไฟฉาย, แผงวงจร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะทั่วไป", "status": "พร้อมใช้งาน"
             },
             # ชั้น 4
             {
                 "id": "BIN-7-401", "floor": 4, "type": "general", "type_th": "ขยะทั่วไป / ขยะฝังกลบ",
-                "loc": "ชั้น 4 หลังประตูภาคฟิสิกส์", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "loc": "ชั้น 4 โถงทางเดิน", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
+                "prohibited": "ขยะรีไซเคิล", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-7-402", "floor": 4, "type": "recycle", "type_th": "ขยะรีไซเคิล",
-                "loc": "ชั้น 4 หลังประตูภาคฟิสิกส์", "items": "ขวดน้ำพลาสติก",
+                "loc": "ชั้น 4 โถงทางเดิน", "items": "ขวดน้ำพลาสติก",
                 "prohibited": "บรรจุภัณฑ์เปื้อนเศษอาหาร, ถุงแกง", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-7-403", "floor": 4, "type": "organic", "type_th": "ขยะอินทรีย์",
-                "loc": "ชั้น 4 หลังประตูภาคฟิสิกส์", "items": "เศษอาหาร, เปลือกผลไม้",
-                "prohibited": "ถุงแกง", "status": "พร้อมใช้งาน"
+                "loc": "ชั้น 4 โถงทางเดิน", "items": "เศษอาหาร, เปลือกผลไม้",
+                "prohibited": "ถุงพลาสติก, โฟม", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-7-404", "floor": 4, "type": "recycle", "type_th": "ถังแยกเศษกระดาษ",
-                "loc": "ชั้น 4 หลังประตูภาคฟิสิกส์", "items": "เศษกระดาษที่ไม่ได้ใช้แล้ว, ลังกระดาษ",
+                "loc": "ชั้น 4 โถงทางเดิน", "items": "เศษกระดาษที่ไม่ได้ใช้แล้ว, ลังกระดาษ",
                 "prohibited": "กระดาษเปื้อนคราบอาหาร, ทิชชู่ใช้แล้ว", "status": "พร้อมใช้งาน"
             },
             # ชั้น 5
             {
                 "id": "BIN-7-501", "floor": 5, "type": "general", "type_th": "ขยะทั่วไป / ขยะฝังกลบ",
-                "loc": "ชั้น 5 หลังประตูภาคฟิสิกส์", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร, เทปกาว",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "loc": "ชั้น 5 โถงกลาง", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร, เทปกาว",
+                "prohibited": "ขยะรีไซเคิล", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-7-502", "floor": 5, "type": "recycle", "type_th": "ขยะรีไซเคิล",
-                "loc": "ชั้น 5 หลังประตูภาคฟิสิกส์", "items": "ขวดน้ำพลาสติก, กระป๋องอลูมิเนียม, ขวดแก้ว",
+                "loc": "ชั้น 5 โถงกลาง", "items": "ขวดน้ำพลาสติก, กระป๋องอลูมิเนียม, ขวดแก้ว",
                 "prohibited": "บรรจุภัณฑ์เปื้อนเศษอาหาร", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-7-503", "floor": 5, "type": "recycle", "type_th": "ตะกร้าสำหรับแยกบรรจุภัณฑ์",
-                "loc": "ชั้น 5 หลังประตูภาคฟิสิกส์", "items": "แก้วพลาสติก, ถ้วยมาม่า, กล่องอาหาร (*Note ต้องเทเศษอาหารออก และล้างให้สะอาดก่อน*)",
+                "loc": "ชั้น 5 จุดแยกขยะพิเศษ", "items": "แก้วพลาสติก, ถ้วยมาม่า, กล่องอาหาร (*Note ต้องเทเศษอาหารออก และล้างให้สะอาดก่อน*)",
                 "prohibited": "บรรจุภัณฑ์ที่มีเศษอาหารตกค้าง", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-7-504", "floor": 5, "type": "general", "type_th": "ตะกร้าสำหรับแยกตะเกียบและไม้เสียบลูกชิ้น",
-                "loc": "ชั้น 5 หลังประตูภาคฟิสิกส์", "items": "ตะเกียบไม้, ตะเกียบพลาสติก, ไม้เสียบลูกชิ้น",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "loc": "ชั้น 5 จุดแยกขยะพิเศษ", "items": "ตะเกียบไม้, ตะเกียบพลาสติก, ไม้เสียบลูกชิ้น",
+                "prohibited": "ขยะมีคมอื่นๆ", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-7-505", "floor": 5, "type": "recycle", "type_th": "ตะกร้าสำหรับแยกหลอดพลาสติก",
-                "loc": "ชั้น 5 หลังประตูภาคฟิสิกส์", "items": "หลอดพลาสติกทุกชนิด",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "loc": "ชั้น 5 จุดแยกขยะพิเศษ", "items": "หลอดพลาสติกทุกชนิด",
+                "prohibited": "ขยะทั่วไป", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-7-506", "floor": 5, "type": "recycle", "type_th": "ตะกร้าสำหรับแยกฝาขวดน้ำ",
-                "loc": "ชั้น 5 หลังประตูภาคฟิสิกส์", "items": "ฝาขวดน้ำพลาสติกทุกขนาด",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "loc": "ชั้น 5 จุดแยกขยะพิเศษ", "items": "ฝาขวดน้ำพลาสติกทุกขนาด",
+                "prohibited": "ฝาโลหะมีคม", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-7-507", "floor": 5, "type": "recycle", "type_th": "ตะกร้าสำหรับแยกกล่องนม / กล่องน้ำผลไม้",
-                "loc": "ชั้น 5 หลังประตูภาคฟิสิกส์", "items": "กล่องนม, กล่องน้ำผลไม้ (*Note ต้องล้างให้สะอาดก่อน*)",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "loc": "ชั้น 5 จุดแยกขยะพิเศษ", "items": "กล่องนม, กล่องน้ำผลไม้ (*Note ต้องล้างให้สะอาดก่อน*)",
+                "prohibited": "กล่องที่มีน้ำบูดหรือเศษอาหารตกค้าง", "status": "พร้อมใช้งาน"
             },
             # ชั้น 6
             {
                 "id": "BIN-7-601", "floor": 6, "type": "recycle", "type_th": "ถังแยกเศษกระดาษ",
-                "loc": "ชั้น 6 หลังประตูภาคฟิสิกส์", "items": "เศษกระดาษที่ไม่ได้ใช้แล้ว, ลังกระดาษ",
+                "loc": "ชั้น 6 ทางเดินชั้น 6", "items": "เศษกระดาษที่ไม่ได้ใช้แล้ว, ลังกระดาษ",
                 "prohibited": "กระดาษเปื้อนอาหาร", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-7-602", "floor": 6, "type": "general", "type_th": "ขยะทั่วไป / ขยะฝังกลบ",
-                "loc": "ชั้น 6 หลังประตูภาคฟิสิกส์", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "loc": "ชั้น 6 ทางเดินชั้น 6", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
+                "prohibited": "ขยะรีไซเคิล", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-7-603", "floor": 6, "type": "recycle", "type_th": "ขยะรีไซเคิล",
-                "loc": "ชั้น 6 หลังประตูภาคฟิสิกส์", "items": "ขวดพลาสติก",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "loc": "ชั้น 6 ทางเดินชั้น 6", "items": "ขวดพลาสติก",
+                "prohibited": "ขยะทั่วไป", "status": "พร้อมใช้งาน"
             }
         ]
     },
     {
         "num": 11, "id": "M", "name_en": "Multidisciplinary Building (M)", "name_th": "อาคาร 11 (อาคารอเนกประสงค์ / สหวิทยาการ)",
-        "x_pct": 52.02, "y_pct": 8.77, "icon": "🏢",
+        "x_pct": 52.02, "y_pct": 8.77,
         "zone": "โซนหลังตรงกลาง ใกล้ GATE 6", "floors": [1, 2, 3],
         "description": "ศูนย์ประชุมสัมมนา ลานกิจกรรมอเนกประสงค์ และสำนักงานหลักสูตร",
         "gates": ["GATE 6"],
@@ -199,7 +256,7 @@ BUILDINGS_DATA = [
             {
                 "id": "BIN-11-101", "floor": 1, "type": "general", "type_th": "ขยะทั่วไป / ขยะฝังกลบ",
                 "loc": "ชั้น 1 โรงอาหาร", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะรีไซเคิล", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-11-102", "floor": 1, "type": "recycle", "type_th": "ขยะรีไซเคิล",
@@ -215,19 +272,19 @@ BUILDINGS_DATA = [
             {
                 "id": "BIN-11-201", "floor": 2, "type": "general", "type_th": "ขยะทั่วไป / ขยะฝังกลบ",
                 "loc": "ชั้น 2 ระเบียงทางเดิน", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะรีไซเคิล", "status": "พร้อมใช้งาน"
             },
             # ชั้น 3
             {
                 "id": "BIN-11-301", "floor": 3, "type": "general", "type_th": "ขยะทั่วไป / ขยะฝังกลบ",
                 "loc": "ชั้น 3 ระเบียงทางเดิน", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะรีไซเคิล", "status": "พร้อมใช้งาน"
             }
         ]
     },
     {
         "num": 13, "id": "K", "name_en": "Chalermphrakiet Building (K)", "name_th": "อาคาร 13 (อาคารเฉลิมพระเกียรติ - บริเวณหลังลิฟต์)",
-        "x_pct": 74.37, "y_pct": 32.82, "icon": "🎖️",
+        "x_pct": 74.37, "y_pct": 32.82,
         "zone": "โซนหน้าฝั่งขวา ติดถนนพระราม 6 และ GATE 3", "floors": [1, 4, 5],
         "description": "ศูนย์รวมห้องวิจัยขั้นสูง และสำนักงานคณบดี คณะวิทยาศาสตร์",
         "gates": ["GATE 3", "GATE 4"],
@@ -236,7 +293,7 @@ BUILDINGS_DATA = [
             {
                 "id": "BIN-13-101", "floor": 1, "type": "general", "type_th": "ขยะทั่วไป / ขยะฝังกลบ",
                 "loc": "ชั้น 1 บริเวณหลังลิฟต์", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะรีไซเคิล", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-13-102", "floor": 1, "type": "recycle", "type_th": "ขยะรีไซเคิล",
@@ -246,7 +303,7 @@ BUILDINGS_DATA = [
             {
                 "id": "BIN-13-103", "floor": 1, "type": "e-waste", "type_th": "ขยะอิเล็กทรอนิกส์",
                 "loc": "ชั้น 1 บริเวณหลังลิฟต์", "items": "แบตเตอรี่, ถ่านไฟฉาย, แผงวงจร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะทั่วไป", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-13-104", "floor": 1, "type": "recycle", "type_th": "Drop Box",
@@ -257,7 +314,7 @@ BUILDINGS_DATA = [
             {
                 "id": "BIN-13-401", "floor": 4, "type": "general", "type_th": "ขยะทั่วไป / ขยะฝังกลบ",
                 "loc": "ชั้น 4 บริเวณหลังลิฟต์", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะรีไซเคิล", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-13-402", "floor": 4, "type": "recycle", "type_th": "ขยะรีไซเคิล (ขวดแก้ว, กระป๋อง)",
@@ -278,7 +335,7 @@ BUILDINGS_DATA = [
             {
                 "id": "BIN-13-501", "floor": 5, "type": "general", "type_th": "ขยะทั่วไป / ขยะฝังกลบ",
                 "loc": "ชั้น 5 บริเวณหลังลิฟต์", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะรีไซเคิล", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-13-502", "floor": 5, "type": "recycle", "type_th": "ขยะรีไซเคิล",
@@ -299,7 +356,7 @@ BUILDINGS_DATA = [
     },
     {
         "num": 15, "id": "ST", "name_en": "Stang Mongkolsuk Building (ST)", "name_th": "อาคาร 15 (อาคารสตางค์ มงคลสุข)",
-        "x_pct": 29.73, "y_pct": 16.38, "icon": "📚",
+        "x_pct": 29.73, "y_pct": 16.38,
         "zone": "โซนซ้าย ติดสนามฟุตบอลและลานจอดรถ GATE 1", "floors": [1],
         "description": "ห้องสมุดสตางค์ มงคลสุข แหล่งเรียนรู้และค้นคว้าวิจัย",
         "gates": ["GATE 1"],
@@ -307,7 +364,7 @@ BUILDINGS_DATA = [
             {
                 "id": "BIN-15-101", "floor": 1, "type": "general", "type_th": "ขยะทั่วไป / ขยะฝังกลบ",
                 "loc": "ชั้น 1 โถงทางเข้าห้องสมุด", "items": "ซองขนม, ซองกาแฟ, ทิชชู่, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะรีไซเคิล, ขยะอันตราย", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-15-102", "floor": 1, "type": "recycle", "type_th": "ขยะรีไซเคิล",
@@ -328,7 +385,7 @@ BUILDINGS_DATA = [
     },
     {
         "num": 18, "id": "P-MUSES", "name_en": "Walkway between P & MUSES Building", "name_th": "เบอร์ 18: ทางเดินระหว่างตึก P กับตึก MUSES",
-        "x_pct": 58.5, "y_pct": 22.5, "icon": "🚶",
+        "x_pct": 58.5, "y_pct": 22.5,
         "zone": "ทางเดินเชื่อมระหว่างอาคารฟิสิกส์ (ตึก 7) และอาคาร MUSES (ตึก 3)", "floors": [1],
         "description": "จุดทิ้งขยะกลางแจ้งบริเวณทางเดินเชื่อมระหว่างตึก P และตึก MUSES",
         "gates": ["GATE 2", "GATE 3"],
@@ -336,7 +393,7 @@ BUILDINGS_DATA = [
             {
                 "id": "BIN-18-01", "floor": 1, "type": "general", "type_th": "ขยะทั่วไป",
                 "loc": "บริเวณทางเดินเชื่อมตึก P และ MUSES", "items": "ซองขนม, ซองกาแฟ, ถุงแกง, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะรีไซเคิล, ขยะอันตราย", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-18-02", "floor": 1, "type": "organic", "type_th": "ขยะอินทรีย์",
@@ -357,7 +414,7 @@ BUILDINGS_DATA = [
     },
     {
         "num": 19, "id": "7-11", "name_en": "Opposite 7-Eleven", "name_th": "เบอร์ 19: ตรงข้าม 7-Eleven",
-        "x_pct": 51.5, "y_pct": 29.5, "icon": "🏪",
+        "x_pct": 51.5, "y_pct": 29.5,
         "zone": "บริเวณทางเดินหน้าโรงอาหารและร้านค้า ตรงข้ามเซเว่น อีเลฟเว่น", "floors": [1],
         "description": "จุดคัดแยกขยะหน้าร้านค้าและโรงอาหาร บริเวณตรงข้าม 7-11",
         "gates": ["GATE 2"],
@@ -365,7 +422,7 @@ BUILDINGS_DATA = [
             {
                 "id": "BIN-19-01", "floor": 1, "type": "general", "type_th": "ขยะทั่วไป",
                 "loc": "ตรงข้าม 7-11", "items": "ซองขนม, ซองกาแฟ, ถุงแกง, บรรจุภัณฑ์ที่เปื้อนเศษอาหาร",
-                "prohibited": " ", "status": "พร้อมใช้งาน"
+                "prohibited": "ขยะรีไซเคิลสะอาด", "status": "พร้อมใช้งาน"
             },
             {
                 "id": "BIN-19-02", "floor": 1, "type": "organic", "type_th": "ขยะอินทรีย์",
@@ -394,15 +451,33 @@ BIN_TYPE_COLORS = {
     "e-waste": "#8E44AD"
 }
 
+BIN_TYPE_LABELS_TH = {
+    "recycle": "🟡 ขยะรีไซเคิล (Recycle Waste)",
+    "general": "🔵 ขยะทั่วไป / ขยะฝังกลบ (General Waste)",
+    "organic": "🟢 ขยะอินทรีย์ / เศษอาหาร (Organic Waste)",
+    "hazardous": "🔴 ขยะอันตราย (Hazardous Waste)",
+    "e-waste": "🟣 ขยะอิเล็กทรอนิกส์ (E-Waste)"
+}
+
 BUILDING_BY_NUM = {b["num"]: b for b in BUILDINGS_DATA}
 
 # =============================================================================
-# 2. การสร้าง Layout Dash App
+# 3. การสร้าง Layout Dash App
 # =============================================================================
 app = Dash(
     __name__,
     title="Phayathai Campus Trash & Bin Finder Map | คณะวิทยาศาสตร์ ม.มหิดล",
-    meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}]
+    meta_tags=[
+        {"name": "viewport", "content": "width=device-width, initial-scale=1"},
+        {
+            "name": "description",
+            "content": "แผนผังอาคารและจุดทิ้งขยะ คณะวิทยาศาสตร์ มหาวิทยาลัยมหิดล พญาไท"
+        },
+        {
+            "name": "keywords",
+            "content": "จุดทิ้งขยะ มหิดล พญาไท, แผนที่ คณะวิทย์ มหิดล, MUSC_BIN"
+        }
+    ]
 )
 server = app.server
 
@@ -438,6 +513,37 @@ app.layout = html.Div(
         html.Main(
             style={"maxWidth": "1050px", "margin": "15px auto", "padding": "0 15px"},
             children=[
+                # ส่วนหัวแสดงโลโก้ MUSC_BIN
+                html.Header(
+                    style={
+                        "display": "flex",
+                        "alignItems": "center",
+                        "gap": "14px",
+                        "marginBottom": "16px",
+                        "padding": "12px 18px",
+                        "backgroundColor": "#ffffff",
+                        "borderRadius": "12px",
+                        "boxShadow": "0 2px 8px rgba(0,0,0,0.06)"
+                    },
+                    children=[
+                        html.Img(
+                            src="/assets/logo.png",
+                            alt="MUSC_BIN Logo",
+                            style={"height": "54px", "width": "auto", "objectFit": "contain"}
+                        ),
+                        html.Div([
+                            html.H1(
+                                "MUSC_BIN",
+                                style={"margin": 0, "fontSize": "1.35rem", "color": "#0F172A", "fontWeight": "700"}
+                            ),
+                            html.P(
+                                "ระบบค้นหาจุดทิ้งขยะ คณะวิทยาศาสตร์ มหาวิทยาลัยมหิดล (พญาไท)",
+                                style={"margin": 0, "fontSize": "0.85rem", "color": "#64748B"}
+                            )
+                        ])
+                    ]
+                ),
+
                 # แถบค้นหาและฟิลเตอร์
                 html.Div(
                     className="filter-card",
@@ -449,7 +555,7 @@ app.layout = html.Div(
                                 dcc.Input(
                                     id="campus-search-input",
                                     type="text",
-                                    placeholder="🔍 พิมพ์ค้นหาขยะ เช่น ขวดน้ำ, แก้วพลาสติก, ถุงพลาสติก, แบตเตอรี่, เศษอาหาร...",
+                                    placeholder="🔍 พิมพ์ชื่อสิ่งของที่ต้องการทิ้ง เช่น กล่องโฟม, ขวดน้ำ, ถ่านไฟฉาย, สายชาร์จ, ปากกา...",
                                     style={
                                         "width": "100%", "padding": "10px 14px",
                                         "borderRadius": "8px", "border": "1.5px solid #CBD5E1",
@@ -459,13 +565,20 @@ app.layout = html.Div(
                                 )
                             ]
                         ),
+                        # แถบแสดงผลการจำแนกประเภทขยะจากฐานข้อมูล 300 รายการ
+                        html.Div(
+                            id="search-classification-banner",
+                            style={"marginTop": "10px"}
+                        ),
                         html.Div(
                             className="waste-filter-pills",
+                            style={"marginTop": "10px"},
                             children=[
                                 html.Button("ทั้งหมด (All)", id={"type": "filter-btn", "index": "all"}, className="filter-pill-btn active", n_clicks=0),
                                 html.Button("🟡 รีไซเคิล", id={"type": "filter-btn", "index": "recycle"}, className="filter-pill-btn", n_clicks=0),
                                 html.Button("🔵 ทั่วไป", id={"type": "filter-btn", "index": "general"}, className="filter-pill-btn", n_clicks=0),
                                 html.Button("🟢 เศษอาหาร/อินทรีย์", id={"type": "filter-btn", "index": "organic"}, className="filter-pill-btn", n_clicks=0),
+                                html.Button("🔴 อันตราย", id={"type": "filter-btn", "index": "hazardous"}, className="filter-pill-btn", n_clicks=0),
                                 html.Button("🟣 อิเล็กทรอนิกส์", id={"type": "filter-btn", "index": "e-waste"}, className="filter-pill-btn", n_clicks=0),
                             ]
                         )
@@ -506,7 +619,7 @@ app.layout = html.Div(
         ),
 
         # =====================================================================
-        # 3. Pop-up Modal แสดงรายละเอียดจุดทิ้งขยะ
+        # 4. Pop-up Modal แสดงรายละเอียดจุดทิ้งขยะ
         # =====================================================================
         html.Div(
             id="building-modal-container",
@@ -590,7 +703,7 @@ app.layout = html.Div(
 )
 
 # =============================================================================
-# 4. Callbacks การคลิกและเปิด/ปิด Pop-up Modal
+# 5. Callbacks การคลิก การค้นหา และเปิด/ปิด Pop-up Modal
 # =============================================================================
 @app.callback(
     Output("selected-building-store", "data"),
@@ -638,12 +751,81 @@ def handle_filter_click(n_clicks_list, current_filter):
     if not ctx.triggered_id:
         return current_filter, no_update
     new_filter = ctx.triggered_id.get("index", "all")
-    filter_keys = ["all", "recycle", "general", "organic", "e-waste"]
+    filter_keys = ["all", "recycle", "general", "organic", "hazardous", "e-waste"]
     class_names = [
         "filter-pill-btn active" if k == new_filter else "filter-pill-btn"
         for k in filter_keys
     ]
     return new_filter, class_names
+
+# แสดงผลการจำแนกประเภทขยะเมื่อค้นหาสิ่งของจากรายการ 300 รายการ
+@app.callback(
+    Output("search-classification-banner", "children"),
+    Input("campus-search-input", "value")
+)
+def update_search_classification_banner(search_query):
+    search_q = (search_query or "").strip()
+    if not search_q:
+        return None
+
+    matched_items, matched_types = search_waste_catalog(search_q)
+    if not matched_items:
+        return html.Div(
+            f"🔎 ค้นหาคำว่า '{search_q}' ในรายการสิ่งของมาตรฐานไม่พบ (กำลังค้นหาจากรายละเอียดจุดทิ้งขยะในอาคารโดยตรง)",
+            style={
+                "padding": "8px 12px",
+                "backgroundColor": "#F8FAFC",
+                "border": "1px dashed #CBD5E1",
+                "borderRadius": "8px",
+                "fontSize": "0.84rem",
+                "color": "#64748B"
+            }
+        )
+
+    badges = []
+    for b_type in ["general", "recycle", "organic", "hazardous", "e-waste"]:
+        if b_type in matched_types:
+            color = BIN_TYPE_COLORS.get(b_type, "#475569")
+            label = BIN_TYPE_LABELS_TH.get(b_type, b_type)
+            badges.append(
+                html.Span(
+                    label,
+                    style={{
+                        "backgroundColor": color,
+                        "color": "#FFFFFF",
+                        "padding": "3px 10px",
+                        "borderRadius": "999px",
+                        "fontSize": "0.8rem",
+                        "fontWeight": "bold",
+                        "marginRight": "6px",
+                        "display": "inline-block"
+                    }}
+                )
+            )
+
+    sample_names = [item["name"] for item in matched_items[:5]]
+    more_count = len(matched_items) - len(sample_names)
+    sample_text = ", ".join(sample_names) + (f" และอีก {more_count} รายการ" if more_count > 0 else "")
+
+    return html.Div(
+        style={
+            "padding": "10px 14px",
+            "backgroundColor": "#F0F9FF",
+            "border": "1px solid #BAE6FD",
+            "borderRadius": "10px",
+            "fontSize": "0.85rem"
+        },
+        children=[
+            html.Div([
+                html.Strong(f"✅ พบสิ่งของที่ตรงกับ '{search_q}' ({len(matched_items)} รายการ) → กรุณาทิ้งในถัง: ", style={"color": "#0369A1"}),
+                *badges
+            ], style={"marginBottom": "4px"}),
+            html.Div([
+                html.Span("รายการที่พบ: ", style={"fontWeight": "bold", "color": "#475569", "fontSize": "0.8rem"}),
+                html.Span(sample_text, style={"color": "#334155", "fontSize": "0.8rem"})
+            ])
+        ]
+    )
 
 @app.callback(
     Output({"type": "building-pin", "index": ALL}, "className"),
@@ -652,19 +834,23 @@ def handle_filter_click(n_clicks_list, current_filter):
 )
 def update_pin_styles(filter_type, search_query):
     search_q = (search_query or "").strip().lower()
+    _, catalog_matched_types = search_waste_catalog(search_q)
     classes = []
+
     for b in BUILDINGS_DATA:
         has_filtered_type = True
         if filter_type and filter_type != "all":
             has_filtered_type = any(bin_item["type"] == filter_type for bin_item in b["bins"])
-            
+
         matches_search = True
         if search_q:
             matches_search = False
             for bin_item in b["bins"]:
-                if (search_q in bin_item["items"].lower() or 
-                    search_q in bin_item["type_th"].lower() or 
-                    search_q in bin_item["loc"].lower() or 
+                # ตรงกับประเภทถังขยะที่ค้นเจอจาก 300 รายการ หรือตรงกับข้อความในจุดทิ้งขยะโดยตรง
+                if (bin_item["type"] in catalog_matched_types or
+                    search_q in bin_item["items"].lower() or
+                    search_q in bin_item["type_th"].lower() or
+                    search_q in bin_item["loc"].lower() or
                     search_q in b["name_th"].lower() or
                     search_q in b["name_en"].lower()):
                     matches_search = True
@@ -689,16 +875,21 @@ def update_pin_styles(filter_type, search_query):
 def update_modal_content(selected_num, filter_type, search_query):
     b = BUILDING_BY_NUM.get(selected_num, BUILDINGS_DATA[0])
     search_q = (search_query or "").strip().lower()
-    
-    # กรองรายการถังขยะตามประเภทและคำค้นหา
+    _, catalog_matched_types = search_waste_catalog(search_q)
+
+    # กรองรายการถังขยะตามประเภทและคำค้นหา (รวมรายการ 300 ชิ้น)
     displayed_bins = []
     for bin_item in b["bins"]:
         if filter_type != "all" and bin_item["type"] != filter_type:
             continue
         if search_q:
-            if not (search_q in bin_item["items"].lower() or 
-                    search_q in bin_item["type_th"].lower() or 
-                    search_q in bin_item["loc"].lower()):
+            matches_catalog_type = bin_item["type"] in catalog_matched_types
+            matches_direct_text = (
+                search_q in bin_item["items"].lower() or
+                search_q in bin_item["type_th"].lower() or
+                search_q in bin_item["loc"].lower()
+            )
+            if not (matches_catalog_type or matches_direct_text):
                 continue
         displayed_bins.append(bin_item)
 
@@ -801,6 +992,7 @@ def update_modal_content(selected_num, filter_type, search_query):
     else:
         content_bins = floor_sections
 
+    # ส่วนหัว Pop-up (นำโลโก้/ไอคอนประจำอาคารออกแล้ว)
     header_content = [
         html.Div(
             str(b["num"]),
@@ -811,7 +1003,6 @@ def update_modal_content(selected_num, filter_type, search_query):
                 "fontWeight": "bold", "fontSize": "0.95rem"
             }
         ),
-        html.Span(b["icon"], style={"fontSize": "1.4rem"}),
         html.Div([
             html.H3(b["name_th"], style={"margin": 0, "fontSize": "1.05rem", "color": "#0F172A", "fontWeight": "700"}),
             html.P(b["name_en"], style={"margin": 0, "fontSize": "0.8rem", "color": "#64748B"})
@@ -829,12 +1020,13 @@ def update_modal_content(selected_num, filter_type, search_query):
     return header_content, body_content
 
 # =============================================================================
-# 5. การรันระบบ
+# 6. การรันระบบ
 # =============================================================================
 if __name__ == "__main__":
     print("=" * 70)
-    print("🚀 Phayathai Campus Trash & Bin Finder Map (Updated)")
+    print(f"🚀 Phayathai Campus Trash & Bin Finder Map ({len(WASTE_ITEMS_CATALOG)} Items Loaded)")
     print("🌐 เข้าใช้งานได้ที่: http://127.0.0.1:8050")
     print("=" * 70)
     app.run(debug=True, host="127.0.0.1", port=8050, use_reloader=False)
 
+    
